@@ -1,13 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  blobPath,
-  exeFilenameFor,
-  imageFilenameFor,
-  uploadFileToBlob,
-} from "@/lib/blob-client";
-import { Product, ProductPublic } from "@/lib/types";
+import { Product } from "@/lib/types";
+
+/** Vercel serverless request body limit (Hobby/Pro default). */
+const VERCEL_MAX_FILE_MB = 4.5;
 
 function apiFetch(url: string, options?: RequestInit) {
   return fetch(url, { ...options, credentials: "include" });
@@ -122,122 +119,55 @@ export function AdminPanel() {
     }
 
     setUploading(true);
-    setMessage("");
+    setMessage("Ina-upload…");
 
     try {
       const statusRes = await apiFetch("/api/storage/status");
       const status = await statusRes.json();
-      const featureList = features
-        .split("\n")
-        .map((f) => f.trim())
-        .filter(Boolean);
 
-      if (status.usesBlob) {
-        const id = editingId ?? crypto.randomUUID();
-        const existing = products.find((p) => p.id === id);
-
-        let exeFilename = existing?.exeFilename ?? "";
-        let imageFilename = existing?.imageFilename ?? "";
-        let originalExeName = existing?.originalExeName ?? "";
-
-        if (!isEditing) {
-          if (!exe || !image) {
-            setMessage("Kailangan ng EXE at image.");
-            setUploading(false);
-            return;
-          }
-        }
-
-        if (exe) {
-          setMessage("Ina-upload ang EXE…");
-          exeFilename = exeFilenameFor(id, exe);
-          originalExeName = exe.name;
-          await uploadFileToBlob(blobPath(exeFilename), exe);
-        }
-
-        if (image) {
-          setMessage("Ina-upload ang image…");
-          imageFilename = imageFilenameFor(id, image);
-          await uploadFileToBlob(blobPath(imageFilename), image);
-        }
-
-        if (!exeFilename || !imageFilename) {
-          setMessage("Kailangan ng EXE at image.");
-          setUploading(false);
-          return;
-        }
-
-        setMessage("Sine-save ang tool…");
-
-        const payload = {
-          name,
-          description,
-          features: featureList,
-          exeFilename,
-          imageFilename,
-          originalExeName,
-          ...(isEditing ? {} : { id }),
-        };
-
-        const res = await apiFetch(
-          isEditing ? `/api/products/${editingId}` : "/api/products/upload",
-          {
-            method: isEditing ? "PATCH" : "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          }
+      if (status.onVercel && !status.usesBlob) {
+        setMessage(
+          "Walang Blob storage. Vercel → Storage → Blob → Connect → Redeploy."
         );
-        const data = await res.json().catch(() => ({}));
+        return;
+      }
 
-        if (res.ok) {
-          setMessage(
-            isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!"
-          );
-          resetForm();
-          loadProducts();
-        } else {
-          setMessage(data.error || `Save failed (${res.status}).`);
-        }
+      const maxBytes = VERCEL_MAX_FILE_MB * 1024 * 1024;
+      if (status.onVercel && exe && exe.size > maxBytes) {
+        setMessage(
+          `EXE masyadong malaki (${(exe.size / 1024 / 1024).toFixed(1)} MB). Sa Vercel max ~${VERCEL_MAX_FILE_MB} MB per upload. I-compress ang file o gamitin mas maliit na build.`
+        );
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("name", name);
+      formData.append("description", description);
+      formData.append("features", features);
+      if (exe) formData.append("exe", exe);
+      if (image) formData.append("image", image);
+
+      const url = isEditing
+        ? `/api/products/${editingId}`
+        : "/api/products/upload";
+      const method = isEditing ? "PATCH" : "POST";
+
+      const res = await apiFetch(url, { method, body: formData });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        setMessage(
+          isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!"
+        );
+        resetForm();
+        loadProducts();
       } else {
-        if (status.onVercel) {
-          setMessage(
-            "Walang Blob storage sa Vercel. Storage → Blob → Connect → Redeploy."
-          );
-          setUploading(false);
-          return;
-        }
-
-        const formData = new FormData();
-        formData.append("name", name);
-        formData.append("description", description);
-        formData.append("features", features);
-        if (exe) formData.append("exe", exe);
-        if (image) formData.append("image", image);
-
-        const url = isEditing
-          ? `/api/products/${editingId}`
-          : "/api/products/upload";
-        const method = isEditing ? "PATCH" : "POST";
-
-        const res = await apiFetch(url, { method, body: formData });
-        const data = await res.json().catch(() => ({}));
-
-        if (res.ok) {
-          setMessage(
-            isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!"
-          );
-          resetForm();
-          loadProducts();
-        } else {
-          setMessage(data.error || "Failed to save.");
-        }
+        setMessage(data.error || `Failed to save (${res.status}).`);
       }
     } catch (err) {
       console.error(err);
       setMessage(
-        err instanceof Error
-          ? err.message
-          : "Upload failed. Check Blob storage sa Vercel."
+        err instanceof Error ? err.message : "Upload failed. Subukan ulit."
       );
     } finally {
       setUploading(false);

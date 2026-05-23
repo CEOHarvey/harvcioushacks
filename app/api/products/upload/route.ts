@@ -12,38 +12,6 @@ export const maxDuration = 60;
 const MAX_EXE = 100 * 1024 * 1024;
 const MAX_IMAGE = 15 * 1024 * 1024;
 
-interface ProductCreateJson {
-  name: string;
-  description: string;
-  features: string[];
-  exeFilename: string;
-  imageFilename: string;
-  originalExeName: string;
-  id?: string;
-}
-
-async function saveProductMetadata(body: ProductCreateJson) {
-  const id = body.id || uuidv4();
-  const now = new Date().toISOString();
-
-  const product: Product = {
-    id,
-    name: body.name.trim(),
-    description: body.description.trim(),
-    features: body.features,
-    imageFilename: body.imageFilename,
-    exeFilename: body.exeFilename,
-    originalExeName: body.originalExeName,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const products = await readProducts();
-  products.push(product);
-  await writeProducts(products);
-  return id;
-}
-
 export async function POST(request: NextRequest) {
   if (!(await isAdminAuthenticated())) {
     return NextResponse.json(
@@ -60,41 +28,6 @@ export async function POST(request: NextRequest) {
       },
       { status: 503 }
     );
-  }
-
-  const contentType = request.headers.get("content-type") || "";
-
-  if (contentType.includes("application/json")) {
-    try {
-      const body = (await request.json()) as ProductCreateJson;
-
-      if (
-        !body.name?.trim() ||
-        !body.description?.trim() ||
-        !body.exeFilename ||
-        !body.imageFilename ||
-        !body.originalExeName
-      ) {
-        return NextResponse.json(
-          { error: "Kulang ang data. I-upload muna ang EXE at image." },
-          { status: 400 }
-        );
-      }
-
-      const id = await saveProductMetadata(body);
-      return NextResponse.json({ success: true, id });
-    } catch (err) {
-      console.error("JSON upload error:", err);
-      return NextResponse.json(
-        {
-          error:
-            err instanceof Error
-              ? err.message
-              : "Hindi ma-save ang product list sa Blob.",
-        },
-        { status: 500 }
-      );
-    }
   }
 
   try {
@@ -164,17 +97,24 @@ export async function POST(request: NextRequest) {
     );
     await saveUploadedFile(imageFilename, imageBuffer, imageFile.type);
 
-    const savedId = await saveProductMetadata({
+    const now = new Date().toISOString();
+    const product: Product = {
       id,
       name,
       description,
       features: parseFeatures(featuresRaw),
-      exeFilename,
       imageFilename,
+      exeFilename,
       originalExeName: exeFile.name,
-    });
+      createdAt: now,
+      updatedAt: now,
+    };
 
-    return NextResponse.json({ success: true, id: savedId });
+    const products = await readProducts();
+    products.push(product);
+    await writeProducts(products);
+
+    return NextResponse.json({ success: true, id });
   } catch (err) {
     console.error("Upload error:", err);
     const msg = err instanceof Error ? err.message : "Upload failed.";

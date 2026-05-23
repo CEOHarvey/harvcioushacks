@@ -5,5 +5,6 @@ export async function GET() {
   return NextResponse.json({
     usesBlob: usesBlobStorage(),
     onVercel: process.env.VERCEL === "1",
+    maxFileMb: 4.5,
   });
 }
