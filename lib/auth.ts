@@ -4,7 +4,26 @@ const COOKIE_NAME = "hh_admin_session";
 const SESSION_VALUE = "authenticated";
 
 export function getAdminPassword(): string {
-  return process.env.ADMIN_PASSWORD || "admin123";
+  const raw = process.env.ADMIN_PASSWORD?.trim();
+  if (raw) return raw;
+  if (process.env.VERCEL === "1") {
+    console.error(
+      "ADMIN_PASSWORD is not set on Vercel. Add it in Environment Variables and redeploy."
+    );
+  }
+  return "admin123";
+}
+
+export function verifyAdminPassword(input: string): boolean {
+  const password = input.trim();
+  const expected = getAdminPassword();
+  if (password.length === 0 || expected.length === 0) return false;
+  if (password.length !== expected.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < password.length; i++) {
+    mismatch |= password.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return mismatch === 0;
 }
 
 export async function isAdminAuthenticated(): Promise<boolean> {

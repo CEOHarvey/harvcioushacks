@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { ProductPublic } from "@/lib/types";
 
+function apiFetch(url: string, options?: RequestInit) {
+  return fetch(url, { ...options, credentials: "include" });
+}
+
 export function AdminPanel() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
@@ -11,6 +15,7 @@ export function AdminPanel() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
 
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [features, setFeatures] = useState("");
@@ -18,14 +23,16 @@ export function AdminPanel() {
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
+  const isEditing = editingId !== null;
+
   const checkSession = useCallback(async () => {
-    const res = await fetch("/api/auth/session");
+    const res = await apiFetch("/api/auth/session");
     const data = await res.json();
     setAuthenticated(data.authenticated);
   }, []);
 
   const loadProducts = useCallback(async () => {
-    const res = await fetch("/api/products");
+    const res = await apiFetch("/api/products");
     if (res.ok) setProducts(await res.json());
   }, []);
 
@@ -38,40 +45,73 @@ export function AdminPanel() {
   }, [authenticated, loadProducts]);
 
   useEffect(() => {
-    if (!image) {
-      setImagePreview(null);
-      return;
+    if (image) {
+      const url = URL.createObjectURL(image);
+      setImagePreview(url);
+      return () => URL.revokeObjectURL(url);
     }
-    const url = URL.createObjectURL(image);
-    setImagePreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [image]);
+    if (isEditing && editingId) {
+      const product = products.find((p) => p.id === editingId);
+      if (product) {
+        setImagePreview(`/api/files/${product.imageFilename}`);
+        return;
+      }
+    }
+    setImagePreview(null);
+  }, [image, isEditing, editingId, products]);
+
+  function resetForm() {
+    setEditingId(null);
+    setName("");
+    setDescription("");
+    setFeatures("");
+    setExe(null);
+    setImage(null);
+    setImagePreview(null);
+  }
+
+  function startEdit(product: ProductPublic) {
+    setEditingId(product.id);
+    setName(product.name);
+    setDescription(product.description);
+    setFeatures(product.features.join("\n"));
+    setExe(null);
+    setImage(null);
+    setMessage("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoginError("");
-    const res = await fetch("/api/auth/login", {
+    const res = await apiFetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
       setAuthenticated(true);
       setPassword("");
     } else {
-      setLoginError("Maling password. Subukan ulit.");
+      setLoginError(
+        data.error ||
+          "Maling password. I-check ang ADMIN_PASSWORD sa Vercel → Redeploy."
+      );
     }
   }
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await apiFetch("/api/auth/logout", { method: "POST" });
     setAuthenticated(false);
+    resetForm();
   }
 
-  async function handleUpload(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!exe || !image) {
-      setMessage("Kailangan ng EXE at image.");
+
+    if (!isEditing && (!exe || !image)) {
+      setMessage("Kailangan ng EXE at image para sa bagong tool.");
       return;
     }
 
@@ -82,36 +122,37 @@ export function AdminPanel() {
     formData.append("name", name);
     formData.append("description", description);
     formData.append("features", features);
-    formData.append("exe", exe);
-    formData.append("image", image);
+    if (exe) formData.append("exe", exe);
+    if (image) formData.append("image", image);
 
-    const res = await fetch("/api/products/upload", {
-      method: "POST",
-      body: formData,
-    });
+    const url = isEditing
+      ? `/api/products/${editingId}`
+      : "/api/products/upload";
+    const method = isEditing ? "PATCH" : "POST";
 
-    const data = await res.json();
+    const res = await apiFetch(url, { method, body: formData });
+    const data = await res.json().catch(() => ({}));
     setUploading(false);
 
     if (res.ok) {
-      setMessage("Na-upload na ang tool!");
-      setName("");
-      setDescription("");
-      setFeatures("");
-      setExe(null);
-      setImage(null);
+      setMessage(isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!");
+      resetForm();
       loadProducts();
     } else {
-      setMessage(data.error || "Upload failed.");
+      setMessage(data.error || "Failed to save.");
     }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this tool permanently?")) return;
-    const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/products/${id}`, { method: "DELETE" });
     if (res.ok) {
       setMessage("Deleted.");
+      if (editingId === id) resetForm();
       loadProducts();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setMessage(data.error || "Delete failed. Login ulit.");
     }
   }
 
@@ -129,7 +170,8 @@ export function AdminPanel() {
         <div className="glass rounded-2xl p-8">
           <h1 className="font-display text-2xl font-bold">Admin Login</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            Mag-login para mag-upload ng EXE at images.
+            Gamitin ang <strong className="text-violet-300">ADMIN_PASSWORD</strong>{" "}
+            na naka-set sa Vercel (Settings → Environment Variables).
           </p>
           <form onSubmit={handleLogin} className="mt-6 space-y-4">
             <input
@@ -139,6 +181,7 @@ export function AdminPanel() {
               placeholder="Admin password"
               className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-violet-500"
               required
+              autoComplete="current-password"
             />
             {loginError && (
               <p className="text-sm text-red-400">{loginError}</p>
@@ -160,7 +203,7 @@ export function AdminPanel() {
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold">Admin Panel</h1>
-          <p className="mt-1 text-zinc-400">Upload EXE + image, manage tools</p>
+          <p className="mt-1 text-zinc-400">Upload, edit, at i-manage ang tools</p>
         </div>
         <button
           type="button"
@@ -178,22 +221,33 @@ export function AdminPanel() {
       )}
 
       <form
-        onSubmit={handleUpload}
+        onSubmit={handleSubmit}
         className="glass mb-12 space-y-5 rounded-2xl p-6 sm:p-8"
       >
-        <h2 className="text-lg font-semibold">Bagong Tool</h2>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-sm text-zinc-400">Pangalan</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-2.5 outline-none focus:border-violet-500"
-              required
-            />
-          </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">
+            {isEditing ? "I-edit ang Tool" : "Bagong Tool"}
+          </h2>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="text-sm text-zinc-400 hover:text-white"
+            >
+              Cancel edit
+            </button>
+          )}
         </div>
+
+        <label className="block">
+          <span className="mb-1 block text-sm text-zinc-400">Pangalan</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-2.5 outline-none focus:border-violet-500"
+            required
+          />
+        </label>
 
         <label className="block">
           <span className="mb-1 block text-sm text-zinc-400">Description</span>
@@ -221,23 +275,27 @@ export function AdminPanel() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-sm text-zinc-400">EXE file</span>
+            <span className="mb-1 block text-sm text-zinc-400">
+              EXE file {isEditing && "(optional — palitan lang kung may bago)"}
+            </span>
             <input
               type="file"
               accept=".exe"
               onChange={(e) => setExe(e.target.files?.[0] || null)}
               className="w-full text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-600 file:px-4 file:py-2 file:text-white"
-              required
+              required={!isEditing}
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm text-zinc-400">Image</span>
+            <span className="mb-1 block text-sm text-zinc-400">
+              Image {isEditing && "(optional — palitan lang kung may bago)"}
+            </span>
             <input
               type="file"
               accept="image/jpeg,image/png,image/webp,image/gif"
               onChange={(e) => setImage(e.target.files?.[0] || null)}
               className="w-full text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-600 file:px-4 file:py-2 file:text-white"
-              required
+              required={!isEditing}
             />
           </label>
         </div>
@@ -258,7 +316,11 @@ export function AdminPanel() {
           disabled={uploading}
           className="rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-3 font-semibold text-white disabled:opacity-50"
         >
-          {uploading ? "Uploading..." : "Publish Tool"}
+          {uploading
+            ? "Saving..."
+            : isEditing
+              ? "Save Changes"
+              : "Publish Tool"}
         </button>
       </form>
 
@@ -273,7 +335,7 @@ export function AdminPanel() {
             {products.map((p) => (
               <li
                 key={p.id}
-                className="flex items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-4"
+                className="flex flex-wrap items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-4"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -287,13 +349,22 @@ export function AdminPanel() {
                     {p.originalExeName}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(p.id)}
-                  className="shrink-0 rounded-lg border border-red-500/40 px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/20"
-                >
-                  Delete
-                </button>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => startEdit(p)}
+                    className="rounded-lg border border-violet-500/40 px-3 py-1.5 text-sm text-violet-300 hover:bg-violet-500/20"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(p.id)}
+                    className="rounded-lg border border-red-500/40 px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/20"
+                  >
+                    Delete
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
