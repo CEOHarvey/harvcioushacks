@@ -2,26 +2,99 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { isAdminAuthenticated } from "@/lib/auth";
+import { imageExtFromType, parseFeatures } from "@/lib/product-form";
 import { readProducts, writeProducts } from "@/lib/products";
 import { saveUploadedFile, usesBlobStorage } from "@/lib/storage";
 import { Product } from "@/lib/types";
 
+export const maxDuration = 60;
+
 const MAX_EXE = 100 * 1024 * 1024;
 const MAX_IMAGE = 15 * 1024 * 1024;
 
+interface ProductCreateJson {
+  name: string;
+  description: string;
+  features: string[];
+  exeFilename: string;
+  imageFilename: string;
+  originalExeName: string;
+  id?: string;
+}
+
+async function saveProductMetadata(body: ProductCreateJson) {
+  const id = body.id || uuidv4();
+  const now = new Date().toISOString();
+
+  const product: Product = {
+    id,
+    name: body.name.trim(),
+    description: body.description.trim(),
+    features: body.features,
+    imageFilename: body.imageFilename,
+    exeFilename: body.exeFilename,
+    originalExeName: body.originalExeName,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const products = await readProducts();
+  products.push(product);
+  await writeProducts(products);
+  return id;
+}
+
 export async function POST(request: NextRequest) {
   if (!(await isAdminAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Hindi ka naka-login. Login ulit gamit ang ADMIN_PASSWORD." },
+      { status: 401 }
+    );
   }
 
   if (process.env.VERCEL === "1" && !usesBlobStorage()) {
     return NextResponse.json(
       {
         error:
-          "Storage not configured. In Vercel: Storage → Create Blob store, then redeploy.",
+          "Kailangan ng Blob storage. Vercel → Storage → Blob → Connect → Redeploy.",
       },
       { status: 503 }
     );
+  }
+
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const body = (await request.json()) as ProductCreateJson;
+
+      if (
+        !body.name?.trim() ||
+        !body.description?.trim() ||
+        !body.exeFilename ||
+        !body.imageFilename ||
+        !body.originalExeName
+      ) {
+        return NextResponse.json(
+          { error: "Kulang ang data. I-upload muna ang EXE at image." },
+          { status: 400 }
+        );
+      }
+
+      const id = await saveProductMetadata(body);
+      return NextResponse.json({ success: true, id });
+    } catch (err) {
+      console.error("JSON upload error:", err);
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error
+              ? err.message
+              : "Hindi ma-save ang product list sa Blob.",
+        },
+        { status: 500 }
+      );
+    }
   }
 
   try {
@@ -48,7 +121,9 @@ export async function POST(request: NextRequest) {
 
     if (exeFile.size > MAX_EXE) {
       return NextResponse.json(
-        { error: "EXE file too large (max 100MB)." },
+        {
+          error: `EXE masyadong malaki (${(exeFile.size / 1024 / 1024).toFixed(1)}MB). Max 100MB.`,
+        },
         { status: 400 }
       );
     }
@@ -74,17 +149,8 @@ export async function POST(request: NextRequest) {
     }
 
     const id = uuidv4();
-    const now = new Date().toISOString();
     const exeExt = path.extname(exeFile.name) || ".exe";
-    const imageExt =
-      imageFile.type === "image/png"
-        ? ".png"
-        : imageFile.type === "image/webp"
-          ? ".webp"
-          : imageFile.type === "image/gif"
-            ? ".gif"
-            : ".jpg";
-
+    const imageExt = imageExtFromType(imageFile.type);
     const exeFilename = `${id}${exeExt}`;
     const imageFilename = `${id}${imageExt}`;
 
@@ -98,33 +164,24 @@ export async function POST(request: NextRequest) {
     );
     await saveUploadedFile(imageFilename, imageBuffer, imageFile.type);
 
-    const features = featuresRaw
-      .split("\n")
-      .map((f) => f.trim())
-      .filter(Boolean);
-
-    const product: Product = {
+    const savedId = await saveProductMetadata({
       id,
       name,
       description,
-      features,
-      imageFilename,
+      features: parseFeatures(featuresRaw),
       exeFilename,
+      imageFilename,
       originalExeName: exeFile.name,
-      createdAt: now,
-      updatedAt: now,
-    };
+    });
 
-    const products = await readProducts();
-    products.push(product);
-    await writeProducts(products);
-
-    return NextResponse.json({ success: true, id });
+    return NextResponse.json({ success: true, id: savedId });
   } catch (err) {
     console.error("Upload error:", err);
-    return NextResponse.json(
-      { error: "Failed to upload product." },
-      { status: 500 }
-    );
+    const msg = err instanceof Error ? err.message : "Upload failed.";
+    const hint =
+      process.env.VERCEL === "1"
+        ? " Sa Vercel, malalaki ang file — siguraduhing may Blob storage at i-redeploy ang site."
+        : "";
+    return NextResponse.json({ error: msg + hint }, { status: 500 });
   }
 }

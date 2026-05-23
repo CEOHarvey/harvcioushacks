@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { isAdminAuthenticated } from "@/lib/auth";
+import { imageExtFromType, parseFeatures } from "@/lib/product-form";
 import { readProducts, writeProducts } from "@/lib/products";
 import {
   deleteUploadedFile,
@@ -8,14 +9,18 @@ import {
   usesBlobStorage,
 } from "@/lib/storage";
 
+export const maxDuration = 60;
+
 const MAX_EXE = 100 * 1024 * 1024;
 const MAX_IMAGE = 15 * 1024 * 1024;
 
-function imageExtFromType(type: string): string {
-  if (type === "image/png") return ".png";
-  if (type === "image/webp") return ".webp";
-  if (type === "image/gif") return ".gif";
-  return ".jpg";
+interface ProductUpdateJson {
+  name: string;
+  description: string;
+  features: string[];
+  exeFilename?: string;
+  imageFilename?: string;
+  originalExeName?: string;
 }
 
 export async function PATCH(
@@ -30,7 +35,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error:
-          "Storage not configured. Vercel → Storage → Blob → Connect → Redeploy.",
+          "Kailangan ng Blob storage. Vercel → Storage → Blob → Connect → Redeploy.",
       },
       { status: 503 }
     );
@@ -42,6 +47,58 @@ export async function PATCH(
 
   if (index === -1) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const body = (await request.json()) as ProductUpdateJson;
+      const name = body.name?.trim();
+      const description = body.description?.trim();
+
+      if (!name || !description) {
+        return NextResponse.json(
+          { error: "Name and description are required." },
+          { status: 400 }
+        );
+      }
+
+      const product = products[index];
+      let exeFilename = body.exeFilename || product.exeFilename;
+      let imageFilename = body.imageFilename || product.imageFilename;
+      let originalExeName = body.originalExeName || product.originalExeName;
+
+      if (body.exeFilename && body.exeFilename !== product.exeFilename) {
+        await deleteUploadedFile(product.exeFilename);
+      }
+      if (body.imageFilename && body.imageFilename !== product.imageFilename) {
+        await deleteUploadedFile(product.imageFilename);
+      }
+
+      products[index] = {
+        ...product,
+        name,
+        description,
+        features: body.features ?? product.features,
+        exeFilename,
+        imageFilename,
+        originalExeName,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await writeProducts(products);
+      return NextResponse.json({ success: true });
+    } catch (err) {
+      console.error("JSON update error:", err);
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error ? err.message : "Failed to update product.",
+        },
+        { status: 500 }
+      );
+    }
   }
 
   try {
@@ -84,10 +141,9 @@ export async function PATCH(
       }
       exeFilename = newExeFilename;
       originalExeName = exeFile.name;
-      const buffer = Buffer.from(await exeFile.arrayBuffer());
       await saveUploadedFile(
         exeFilename,
-        buffer,
+        Buffer.from(await exeFile.arrayBuffer()),
         "application/octet-stream"
       );
     }
@@ -111,20 +167,18 @@ export async function PATCH(
         await deleteUploadedFile(imageFilename);
       }
       imageFilename = newImageFilename;
-      const buffer = Buffer.from(await imageFile.arrayBuffer());
-      await saveUploadedFile(imageFilename, buffer, imageFile.type);
+      await saveUploadedFile(
+        imageFilename,
+        Buffer.from(await imageFile.arrayBuffer()),
+        imageFile.type
+      );
     }
-
-    const features = featuresRaw
-      .split("\n")
-      .map((f) => f.trim())
-      .filter(Boolean);
 
     products[index] = {
       ...product,
       name,
       description,
-      features,
+      features: parseFeatures(featuresRaw),
       exeFilename,
       imageFilename,
       originalExeName,

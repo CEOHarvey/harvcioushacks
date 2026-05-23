@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ProductPublic } from "@/lib/types";
+import {
+  blobPath,
+  exeFilenameFor,
+  imageFilenameFor,
+  uploadFileToBlob,
+} from "@/lib/blob-client";
+import { Product, ProductPublic } from "@/lib/types";
 
 function apiFetch(url: string, options?: RequestInit) {
   return fetch(url, { ...options, credentials: "include" });
@@ -11,7 +17,7 @@ export function AdminPanel() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
-  const [products, setProducts] = useState<ProductPublic[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -70,7 +76,7 @@ export function AdminPanel() {
     setImagePreview(null);
   }
 
-  function startEdit(product: ProductPublic) {
+  function startEdit(product: Product) {
     setEditingId(product.id);
     setName(product.name);
     setDescription(product.description);
@@ -118,28 +124,123 @@ export function AdminPanel() {
     setUploading(true);
     setMessage("");
 
-    const formData = new FormData();
-    formData.append("name", name);
-    formData.append("description", description);
-    formData.append("features", features);
-    if (exe) formData.append("exe", exe);
-    if (image) formData.append("image", image);
+    try {
+      const statusRes = await apiFetch("/api/storage/status");
+      const status = await statusRes.json();
+      const featureList = features
+        .split("\n")
+        .map((f) => f.trim())
+        .filter(Boolean);
 
-    const url = isEditing
-      ? `/api/products/${editingId}`
-      : "/api/products/upload";
-    const method = isEditing ? "PATCH" : "POST";
+      if (status.usesBlob) {
+        const id = editingId ?? crypto.randomUUID();
+        const existing = products.find((p) => p.id === id);
 
-    const res = await apiFetch(url, { method, body: formData });
-    const data = await res.json().catch(() => ({}));
-    setUploading(false);
+        let exeFilename = existing?.exeFilename ?? "";
+        let imageFilename = existing?.imageFilename ?? "";
+        let originalExeName = existing?.originalExeName ?? "";
 
-    if (res.ok) {
-      setMessage(isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!");
-      resetForm();
-      loadProducts();
-    } else {
-      setMessage(data.error || "Failed to save.");
+        if (!isEditing) {
+          if (!exe || !image) {
+            setMessage("Kailangan ng EXE at image.");
+            setUploading(false);
+            return;
+          }
+        }
+
+        if (exe) {
+          setMessage("Ina-upload ang EXE…");
+          exeFilename = exeFilenameFor(id, exe);
+          originalExeName = exe.name;
+          await uploadFileToBlob(blobPath(exeFilename), exe);
+        }
+
+        if (image) {
+          setMessage("Ina-upload ang image…");
+          imageFilename = imageFilenameFor(id, image);
+          await uploadFileToBlob(blobPath(imageFilename), image);
+        }
+
+        if (!exeFilename || !imageFilename) {
+          setMessage("Kailangan ng EXE at image.");
+          setUploading(false);
+          return;
+        }
+
+        setMessage("Sine-save ang tool…");
+
+        const payload = {
+          name,
+          description,
+          features: featureList,
+          exeFilename,
+          imageFilename,
+          originalExeName,
+          ...(isEditing ? {} : { id }),
+        };
+
+        const res = await apiFetch(
+          isEditing ? `/api/products/${editingId}` : "/api/products/upload",
+          {
+            method: isEditing ? "PATCH" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok) {
+          setMessage(
+            isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!"
+          );
+          resetForm();
+          loadProducts();
+        } else {
+          setMessage(data.error || `Save failed (${res.status}).`);
+        }
+      } else {
+        if (status.onVercel) {
+          setMessage(
+            "Walang Blob storage sa Vercel. Storage → Blob → Connect → Redeploy."
+          );
+          setUploading(false);
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("name", name);
+        formData.append("description", description);
+        formData.append("features", features);
+        if (exe) formData.append("exe", exe);
+        if (image) formData.append("image", image);
+
+        const url = isEditing
+          ? `/api/products/${editingId}`
+          : "/api/products/upload";
+        const method = isEditing ? "PATCH" : "POST";
+
+        const res = await apiFetch(url, { method, body: formData });
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok) {
+          setMessage(
+            isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!"
+          );
+          resetForm();
+          loadProducts();
+        } else {
+          setMessage(data.error || "Failed to save.");
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Upload failed. Check Blob storage sa Vercel."
+      );
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -317,7 +418,7 @@ export function AdminPanel() {
           className="rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-3 font-semibold text-white disabled:opacity-50"
         >
           {uploading
-            ? "Saving..."
+            ? message || "Saving..."
             : isEditing
               ? "Save Changes"
               : "Publish Tool"}
