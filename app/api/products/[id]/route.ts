@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import { isAdminAuthenticated } from "@/lib/auth";
-import {
-  getProductById,
-  readProducts,
-  uploadPath,
-  writeProducts,
-} from "@/lib/products";
+import { readProducts, writeProducts } from "@/lib/products";
+import { deleteUploadedFile } from "@/lib/storage";
 
 export async function DELETE(
   _request: NextRequest,
@@ -27,12 +22,8 @@ export async function DELETE(
   const [removed] = products.splice(index, 1);
   await writeProducts(products);
 
-  try {
-    await fs.unlink(uploadPath(removed.exeFilename));
-    await fs.unlink(uploadPath(removed.imageFilename));
-  } catch {
-    /* files may already be missing */
-  }
+  await deleteUploadedFile(removed.exeFilename);
+  await deleteUploadedFile(removed.imageFilename);
 
   return NextResponse.json({ success: true });
 }

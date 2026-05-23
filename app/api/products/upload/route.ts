@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { isAdminAuthenticated } from "@/lib/auth";
-import {
-  readProducts,
-  uploadPath,
-  writeProducts,
-} from "@/lib/products";
-import { UPLOADS_DIR } from "@/lib/paths";
+import { readProducts, writeProducts } from "@/lib/products";
+import { saveUploadedFile, usesBlobStorage } from "@/lib/storage";
 import { Product } from "@/lib/types";
 
 const MAX_EXE = 100 * 1024 * 1024;
@@ -17,6 +12,16 @@ const MAX_IMAGE = 15 * 1024 * 1024;
 export async function POST(request: NextRequest) {
   if (!(await isAdminAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (process.env.VERCEL === "1" && !usesBlobStorage()) {
+    return NextResponse.json(
+      {
+        error:
+          "Storage not configured. In Vercel: Storage → Create Blob store, then redeploy.",
+      },
+      { status: 503 }
+    );
   }
 
   try {
@@ -68,8 +73,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await fs.mkdir(UPLOADS_DIR, { recursive: true });
-
     const id = uuidv4();
     const now = new Date().toISOString();
     const exeExt = path.extname(exeFile.name) || ".exe";
@@ -88,8 +91,12 @@ export async function POST(request: NextRequest) {
     const exeBuffer = Buffer.from(await exeFile.arrayBuffer());
     const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
 
-    await fs.writeFile(uploadPath(exeFilename), exeBuffer);
-    await fs.writeFile(uploadPath(imageFilename), imageBuffer);
+    await saveUploadedFile(
+      exeFilename,
+      exeBuffer,
+      "application/octet-stream"
+    );
+    await saveUploadedFile(imageFilename, imageBuffer, imageFile.type);
 
     const features = featuresRaw
       .split("\n")

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import path from "path";
-import { uploadPath } from "@/lib/products";
+import { readUploadedFile } from "@/lib/storage";
 
 const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -21,22 +20,21 @@ export async function GET(
     return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
   }
 
-  const filePath = uploadPath(filename);
   const ext = path.extname(filename).toLowerCase();
 
   if (!MIME[ext]) {
     return NextResponse.json({ error: "Not an image" }, { status: 400 });
   }
 
-  try {
-    const buffer = await fs.readFile(filePath);
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type": MIME[ext],
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
-  } catch {
+  const buffer = await readUploadedFile(filename);
+  if (!buffer) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+
+  return new NextResponse(new Uint8Array(buffer), {
+    headers: {
+      "Content-Type": MIME[ext],
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
 }
