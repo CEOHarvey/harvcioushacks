@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { del, get, list, put } from "@vercel/blob";
+import { normalizeProduct } from "./product-form";
 import { Product } from "./types";
 import { PRODUCTS_FILE, UPLOADS_DIR } from "./paths";
 
@@ -45,7 +46,10 @@ async function readProductsLocal(): Promise<Product[]> {
     }
     const raw = await fs.readFile(PRODUCTS_FILE, "utf-8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Product[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((p) =>
+      normalizeProduct(p as Record<string, unknown>)
+    );
   } catch {
     return [];
   }
@@ -61,7 +65,10 @@ async function readProductsBlob(): Promise<Product[]> {
     const buffer = await readBlobBuffer(PRODUCTS_BLOB_KEY);
     if (!buffer) return [];
     const parsed = JSON.parse(buffer.toString("utf-8"));
-    return Array.isArray(parsed) ? (parsed as Product[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((p) =>
+      normalizeProduct(p as Record<string, unknown>)
+    );
   } catch {
     return [];
   }

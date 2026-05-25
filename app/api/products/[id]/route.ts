@@ -16,6 +16,32 @@ export const maxDuration = 60;
 
 const MAX_IMAGE = 15 * 1024 * 1024;
 
+async function applyProductUpdate(
+  index: number,
+  products: Awaited<ReturnType<typeof readProducts>>,
+  data: {
+    name: string;
+    description: string;
+    features: string[];
+    downloadUrl: string;
+    imageFilename: string;
+  }
+) {
+  const product = products[index];
+  products[index] = {
+    ...product,
+    name: data.name,
+    description: data.description,
+    features: data.features,
+    downloadUrl: data.downloadUrl,
+    imageFilename: data.imageFilename,
+    updatedAt: new Date().toISOString(),
+    exeFilename: undefined,
+    originalExeName: undefined,
+  };
+  await writeProducts(products);
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -39,7 +65,41 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const product = products[index];
+  const contentType = request.headers.get("content-type") || "";
+
   try {
+    if (contentType.includes("application/json")) {
+      const body = await request.json();
+      const name = String(body.name || "").trim();
+      const description = String(body.description || "").trim();
+      const downloadUrlRaw = String(body.downloadUrl || "");
+      const features = Array.isArray(body.features)
+        ? body.features.map((f: unknown) => String(f).trim()).filter(Boolean)
+        : parseFeatures(String(body.features || ""));
+
+      const downloadUrl = normalizeDownloadUrl(downloadUrlRaw);
+      if (!name || !description || !downloadUrl) {
+        return NextResponse.json(
+          {
+            error:
+              "Kailangan ang pangalan, description, at valid download link (https://...).",
+          },
+          { status: 400 }
+        );
+      }
+
+      await applyProductUpdate(index, products, {
+        name,
+        description,
+        features,
+        downloadUrl,
+        imageFilename: product.imageFilename,
+      });
+
+      return NextResponse.json({ success: true });
+    }
+
     const formData = await request.formData();
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
@@ -48,15 +108,16 @@ export async function PATCH(
     const imageFile = formData.get("image") as File | null;
 
     const downloadUrl = normalizeDownloadUrl(downloadUrlRaw);
-
     if (!name || !description || !downloadUrl) {
       return NextResponse.json(
-        { error: "Name, description, and valid download link are required." },
+        {
+          error:
+            "Kailangan ang pangalan, description, at valid download link (https://...).",
+        },
         { status: 400 }
       );
     }
 
-    const product = products[index];
     let imageFilename = product.imageFilename;
 
     if (imageFile && imageFile.size > 0) {
@@ -75,7 +136,11 @@ export async function PATCH(
       }
       const newImageFilename = `${id}${imageExtFromType(imageFile.type)}`;
       if (newImageFilename !== imageFilename) {
-        await deleteUploadedFile(imageFilename);
+        try {
+          await deleteUploadedFile(imageFilename);
+        } catch {
+          /* old image may already be gone */
+        }
       }
       imageFilename = newImageFilename;
       await saveUploadedFile(
@@ -85,22 +150,20 @@ export async function PATCH(
       );
     }
 
-    products[index] = {
-      ...product,
+    await applyProductUpdate(index, products, {
       name,
       description,
       features: parseFeatures(featuresRaw),
       downloadUrl,
       imageFilename,
-      updatedAt: new Date().toISOString(),
-    };
+    });
 
-    await writeProducts(products);
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("Update error:", err);
+    const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to update product." },
+      { error: `Hindi ma-update: ${msg}` },
       { status: 500 }
     );
   }
@@ -125,9 +188,17 @@ export async function DELETE(
   const [removed] = products.splice(index, 1);
   await writeProducts(products);
 
-  await deleteUploadedFile(removed.imageFilename);
+  try {
+    await deleteUploadedFile(removed.imageFilename);
+  } catch {
+    /* ignore */
+  }
   if (removed.exeFilename) {
-    await deleteUploadedFile(removed.exeFilename);
+    try {
+      await deleteUploadedFile(removed.exeFilename);
+    } catch {
+      /* ignore */
+    }
   }
 
   return NextResponse.json({ success: true });

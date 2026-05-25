@@ -75,8 +75,8 @@ export function AdminPanel() {
     setEditingId(product.id);
     setName(product.name);
     setDescription(product.description);
-    setFeatures(product.features.join("\n"));
-    setDownloadUrl(getProductDownloadUrl(product));
+    setFeatures((product.features ?? []).join("\n"));
+    setDownloadUrl(product.downloadUrl || "");
     setImage(null);
     setMessage("");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -130,19 +130,39 @@ export function AdminPanel() {
         return;
       }
 
-      const formData = new FormData();
-      formData.append("name", name);
-      formData.append("description", description);
-      formData.append("features", features);
-      formData.append("downloadUrl", downloadUrl);
-      if (image) formData.append("image", image);
+      const featureList = features
+        .split("\n")
+        .map((f) => f.trim())
+        .filter(Boolean);
 
-      const url = isEditing
-        ? `/api/products/${editingId}`
-        : "/api/products/upload";
-      const method = isEditing ? "PATCH" : "POST";
+      let res: Response;
 
-      const res = await apiFetch(url, { method, body: formData });
+      if (isEditing && !image) {
+        res = await apiFetch(`/api/products/${editingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            description,
+            features: featureList,
+            downloadUrl,
+          }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("name", name);
+        formData.append("description", description);
+        formData.append("features", features);
+        formData.append("downloadUrl", downloadUrl);
+        if (image) formData.append("image", image);
+
+        const url = isEditing
+          ? `/api/products/${editingId}`
+          : "/api/products/upload";
+        const method = isEditing ? "PATCH" : "POST";
+
+        res = await apiFetch(url, { method, body: formData });
+      }
       const data = await res.json().catch(() => ({}));
 
       if (res.ok) {
