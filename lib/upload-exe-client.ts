@@ -1,6 +1,7 @@
 "use client";
 
 const CHUNK_SIZE = 4 * 1024 * 1024;
+const CHUNK_THRESHOLD = 4 * 1024 * 1024;
 
 function apiFetch(url: string, options?: RequestInit) {
   return fetch(url, { ...options, credentials: "include" });
@@ -58,6 +59,19 @@ export async function uploadExeInChunks(
   onProgress?.(100, "EXE tapos na");
 }
 
-export function needsChunkedExeUpload(file: File, onVercel: boolean): boolean {
-  return onVercel && file.size > 4 * 1024 * 1024;
+/** Large EXE (>4MB) always uses chunked upload on live site or when Blob is enabled. */
+export function needsChunkedExeUpload(
+  file: File,
+  opts?: { onVercel?: boolean; usesBlob?: boolean }
+): boolean {
+  if (file.size <= CHUNK_THRESHOLD) return false;
+
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host.includes("vercel.app") || host.includes("harvcioushacks")) {
+      return true;
+    }
+  }
+
+  return Boolean(opts?.onVercel || opts?.usesBlob);
 }

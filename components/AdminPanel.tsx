@@ -148,7 +148,15 @@ export function AdminPanel() {
         exeFilename = `${productId}${ext}`;
         originalExeName = exe.name;
 
-        if (needsChunkedExeUpload(exe, status.onVercel)) {
+        if (
+          needsChunkedExeUpload(exe, {
+            onVercel: status.onVercel,
+            usesBlob: status.usesBlob,
+          })
+        ) {
+          setMessage(
+            `Malaking EXE (${(exe.size / 1024 / 1024).toFixed(1)} MB) — ina-upload sa parts…`
+          );
           await uploadExeInChunks(exe, exeFilename, (pct, label) =>
             setMessage(`${label} (${pct}%)`)
           );
@@ -266,7 +274,9 @@ export function AdminPanel() {
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-bold">Admin Panel</h1>
-          <p className="mt-1 text-zinc-400">Upload, edit, at i-manage ang tools</p>
+          <p className="mt-1 text-zinc-400">
+            Upload, edit, at i-manage ang tools (EXE hanggang 100MB)
+          </p>
         </div>
         <button
           type="button"
@@ -340,6 +350,9 @@ export function AdminPanel() {
           <label className="block">
             <span className="mb-1 block text-sm text-zinc-400">
               EXE file {isEditing && "(optional — palitan lang kung may bago)"}
+              <span className="mt-0.5 block text-xs text-violet-400/90">
+                Malalaking file (4MB+) — auto upload sa parts. Max 100MB.
+              </span>
             </span>
             <input
               type="file"
