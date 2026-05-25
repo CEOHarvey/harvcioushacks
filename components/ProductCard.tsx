@@ -1,5 +1,3 @@
-"use client";
-
 import { ProductPublic } from "@/lib/types";
 
 interface ProductCardProps {
@@ -9,10 +7,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product, index }: ProductCardProps) {
   const imageUrl = `/api/files/${product.imageFilename}`;
-
-  function handleDownload() {
-    window.location.href = `/api/products/${product.id}/download`;
-  }
+  const downloadUrl = product.downloadUrl;
 
   return (
     <article
@@ -59,14 +54,19 @@ export function ProductCard({ product, index }: ProductCardProps) {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleDownload}
-          className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-violet-900/50 transition hover:from-violet-500 hover:to-fuchsia-500 hover:shadow-violet-800/60 active:scale-[0.98] sm:w-auto sm:min-w-[220px]"
-        >
-          <DownloadIcon />
-          Download .exe
-        </button>
+        {downloadUrl ? (
+          <a
+            href={downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-violet-900/50 transition hover:from-violet-500 hover:to-fuchsia-500 hover:shadow-violet-800/60 active:scale-[0.98] sm:w-auto sm:min-w-[220px]"
+          >
+            <DownloadIcon />
+            Download
+          </a>
+        ) : (
+          <p className="text-sm text-zinc-500">Download link not available.</p>
+        )}
       </div>
     </article>
   );
@@ -80,11 +80,12 @@ function DownloadIcon() {
       viewBox="0 0 24 24"
       stroke="currentColor"
       strokeWidth={2}
+      aria-hidden
     >
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
-        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
       />
     </svg>
   );

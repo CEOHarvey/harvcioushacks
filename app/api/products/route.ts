@@ -12,9 +12,6 @@ export async function GET() {
 }
 
 export async function POST() {
-  if (!(await isAdminAuthenticated())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
   return NextResponse.json(
     { error: "Use POST /api/products/upload" },
     { status: 400 }

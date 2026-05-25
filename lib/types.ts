@@ -4,10 +4,12 @@ export interface Product {
   description: string;
   features: string[];
   imageFilename: string;
-  exeFilename: string;
-  originalExeName: string;
+  downloadUrl: string;
   createdAt: string;
   updatedAt: string;
+  /** @deprecated Legacy hosted EXE — use downloadUrl */
+  exeFilename?: string;
+  originalExeName?: string;
 }
 
-export interface ProductPublic extends Omit<Product, "exeFilename"> {}
+export type ProductPublic = Product;

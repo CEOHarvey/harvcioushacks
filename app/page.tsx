@@ -22,8 +22,8 @@ export default async function HomePage() {
           <span className="text-gradient">HarvciousHacks</span>
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-lg text-zinc-400">
-          Curated tools with full feature lists. Click download and your file
-          starts instantly.
+          Curated tools with full feature lists. Click download to open the
+          official link in a new tab.
         </p>
       </section>
 

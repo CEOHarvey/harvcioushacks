@@ -1,11 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { getProductDownloadUrl } from "@/lib/product-form";
 import { Product } from "@/lib/types";
-import {
-  needsChunkedExeUpload,
-  uploadExeInChunks,
-} from "@/lib/upload-exe-client";
 
 function apiFetch(url: string, options?: RequestInit) {
   return fetch(url, { ...options, credentials: "include" });
@@ -23,7 +20,7 @@ export function AdminPanel() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [features, setFeatures] = useState("");
-  const [exe, setExe] = useState<File | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
@@ -69,7 +66,7 @@ export function AdminPanel() {
     setName("");
     setDescription("");
     setFeatures("");
-    setExe(null);
+    setDownloadUrl("");
     setImage(null);
     setImagePreview(null);
   }
@@ -79,7 +76,7 @@ export function AdminPanel() {
     setName(product.name);
     setDescription(product.description);
     setFeatures(product.features.join("\n"));
-    setExe(null);
+    setDownloadUrl(getProductDownloadUrl(product));
     setImage(null);
     setMessage("");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -114,13 +111,13 @@ export function AdminPanel() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!isEditing && (!exe || !image)) {
-      setMessage("Kailangan ng EXE at image para sa bagong tool.");
+    if (!isEditing && !image) {
+      setMessage("Kailangan ng image para sa bagong tool.");
       return;
     }
 
     setUploading(true);
-    setMessage("Ina-upload…");
+    setMessage("Sine-save…");
 
     try {
       const statusRes = await apiFetch("/api/storage/status");
@@ -128,64 +125,17 @@ export function AdminPanel() {
 
       if (status.onVercel && !status.usesBlob) {
         setMessage(
-          "Walang Blob storage. Vercel → Storage → Blob → Connect → Redeploy."
+          "Walang Blob storage para sa image. Vercel → Storage → Blob → Connect → Redeploy."
         );
         return;
-      }
-
-      const productId = editingId ?? crypto.randomUUID();
-      const existing = products.find((p) => p.id === productId);
-      let exeFilename = existing?.exeFilename ?? `${productId}.exe`;
-      let originalExeName = existing?.originalExeName ?? "";
-      let exeWasChunked = false;
-
-      if (exe) {
-        if (exe.size > 100 * 1024 * 1024) {
-          setMessage("EXE max 100MB.");
-          return;
-        }
-        const ext = exe.name.toLowerCase().endsWith(".exe") ? ".exe" : ".exe";
-        exeFilename = `${productId}${ext}`;
-        originalExeName = exe.name;
-
-        if (
-          needsChunkedExeUpload(exe, {
-            onVercel: status.onVercel,
-            usesBlob: status.usesBlob,
-          })
-        ) {
-          setMessage(
-            `Malaking EXE (${(exe.size / 1024 / 1024).toFixed(1)} MB) — ina-upload sa parts…`
-          );
-          await uploadExeInChunks(exe, exeFilename, (pct, label) =>
-            setMessage(`${label} (${pct}%)`)
-          );
-          exeWasChunked = true;
-        }
       }
 
       const formData = new FormData();
       formData.append("name", name);
       formData.append("description", description);
       formData.append("features", features);
-      if (!isEditing) formData.append("productId", productId);
+      formData.append("downloadUrl", downloadUrl);
       if (image) formData.append("image", image);
-
-      if (exe && !exeWasChunked) {
-        formData.append("exe", exe);
-      }
-      if (exe && exeWasChunked) {
-        formData.append("exePreUploaded", "1");
-        formData.append("exeFilename", exeFilename);
-        formData.append("originalExeName", originalExeName);
-      }
-
-      if (!isEditing && !exe) {
-        setMessage("Kailangan ng EXE.");
-        return;
-      }
-
-      setMessage("Sine-save ang tool…");
 
       const url = isEditing
         ? `/api/products/${editingId}`
@@ -197,7 +147,7 @@ export function AdminPanel() {
 
       if (res.ok) {
         setMessage(
-          isEditing ? "Na-update na ang tool!" : "Na-upload na ang tool!"
+          isEditing ? "Na-update na ang tool!" : "Na-publish na ang tool!"
         );
         resetForm();
         loadProducts();
@@ -207,7 +157,7 @@ export function AdminPanel() {
     } catch (err) {
       console.error(err);
       setMessage(
-        err instanceof Error ? err.message : "Upload failed. Subukan ulit."
+        err instanceof Error ? err.message : "Save failed. Subukan ulit."
       );
     } finally {
       setUploading(false);
@@ -275,7 +225,7 @@ export function AdminPanel() {
         <div>
           <h1 className="font-display text-3xl font-bold">Admin Panel</h1>
           <p className="mt-1 text-zinc-400">
-            Upload, edit, at i-manage ang tools (EXE hanggang 100MB)
+            Image dito sa site — download link sa labas (mas safe)
           </p>
         </div>
         <button
@@ -346,35 +296,35 @@ export function AdminPanel() {
           />
         </label>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-sm text-zinc-400">
-              EXE file {isEditing && "(optional — palitan lang kung may bago)"}
-              <span className="mt-0.5 block text-xs text-violet-400/90">
-                Malalaking file (4MB+) — auto upload sa parts. Max 100MB.
-              </span>
+        <label className="block">
+          <span className="mb-1 block text-sm text-zinc-400">
+            Download link
+            <span className="mt-0.5 block text-xs text-violet-400/90">
+              Google Drive, MediaFire, Discord, atbp. — https://...
             </span>
-            <input
-              type="file"
-              accept=".exe"
-              onChange={(e) => setExe(e.target.files?.[0] || null)}
-              className="w-full text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-600 file:px-4 file:py-2 file:text-white"
-              required={!isEditing}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-sm text-zinc-400">
-              Image {isEditing && "(optional — palitan lang kung may bago)"}
-            </span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              onChange={(e) => setImage(e.target.files?.[0] || null)}
-              className="w-full text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-600 file:px-4 file:py-2 file:text-white"
-              required={!isEditing}
-            />
-          </label>
-        </div>
+          </span>
+          <input
+            type="url"
+            value={downloadUrl}
+            onChange={(e) => setDownloadUrl(e.target.value)}
+            placeholder="https://..."
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-2.5 outline-none focus:border-violet-500"
+            required
+          />
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block text-sm text-zinc-400">
+            Cover image {isEditing && "(optional kung hindi papalitan)"}
+          </span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            onChange={(e) => setImage(e.target.files?.[0] || null)}
+            className="w-full text-sm text-zinc-400 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-600 file:px-4 file:py-2 file:text-white"
+            required={!isEditing}
+          />
+        </label>
 
         {imagePreview && (
           <div className="flex min-h-[200px] max-h-[50vh] items-center justify-center rounded-xl border border-white/10 bg-black/30 p-4">
@@ -393,7 +343,7 @@ export function AdminPanel() {
           className="rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-3 font-semibold text-white disabled:opacity-50"
         >
           {uploading
-            ? message || "Saving..."
+            ? "Saving..."
             : isEditing
               ? "Save Changes"
               : "Publish Tool"}
@@ -405,7 +355,7 @@ export function AdminPanel() {
           Published Tools ({products.length})
         </h2>
         {products.length === 0 ? (
-          <p className="text-zinc-500">Wala pang na-upload.</p>
+          <p className="text-zinc-500">Wala pang tools.</p>
         ) : (
           <ul className="space-y-3">
             {products.map((p) => (
@@ -422,7 +372,7 @@ export function AdminPanel() {
                 <div className="min-w-0 flex-1">
                   <p className="font-medium truncate">{p.name}</p>
                   <p className="text-xs text-zinc-500 truncate">
-                    {p.originalExeName}
+                    {getProductDownloadUrl(p) || "No link"}
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">

@@ -12,11 +12,22 @@ export function imageExtFromType(type: string): string {
   return ".jpg";
 }
 
-export function imageExtFromFilename(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".png")) return ".png";
-  if (lower.endsWith(".webp")) return ".webp";
-  if (lower.endsWith(".gif")) return ".gif";
-  if (lower.endsWith(".jpeg") || lower.endsWith(".jpg")) return ".jpg";
-  return ".jpg";
+import type { Product } from "./types";
+
+export function normalizeDownloadUrl(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function getProductDownloadUrl(product: Product): string {
+  if (product.downloadUrl) return product.downloadUrl;
+  if (product.exeFilename) return `/api/products/${product.id}/download`;
+  return "";
 }

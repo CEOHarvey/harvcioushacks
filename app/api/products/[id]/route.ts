@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
 import { isAdminAuthenticated } from "@/lib/auth";
-import { imageExtFromType, parseFeatures } from "@/lib/product-form";
+import {
+  imageExtFromType,
+  normalizeDownloadUrl,
+  parseFeatures,
+} from "@/lib/product-form";
 import { readProducts, writeProducts } from "@/lib/products";
 import {
   deleteUploadedFile,
-  readUploadedFile,
   saveUploadedFile,
   usesBlobStorage,
 } from "@/lib/storage";
 
 export const maxDuration = 60;
 
-const MAX_EXE = 100 * 1024 * 1024;
 const MAX_IMAGE = 15 * 1024 * 1024;
 
 export async function PATCH(
@@ -25,10 +26,7 @@ export async function PATCH(
 
   if (process.env.VERCEL === "1" && !usesBlobStorage()) {
     return NextResponse.json(
-      {
-        error:
-          "Kailangan ng Blob storage. Vercel → Storage → Blob → Connect → Redeploy.",
-      },
+      { error: "Kailangan ng Blob storage para sa images." },
       { status: 503 }
     );
   }
@@ -46,69 +44,20 @@ export async function PATCH(
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
     const featuresRaw = String(formData.get("features") || "");
-    const exePreUploaded = formData.get("exePreUploaded") === "1";
-    const exeFile = formData.get("exe") as File | null;
+    const downloadUrlRaw = String(formData.get("downloadUrl") || "");
     const imageFile = formData.get("image") as File | null;
 
-    if (!name || !description) {
+    const downloadUrl = normalizeDownloadUrl(downloadUrlRaw);
+
+    if (!name || !description || !downloadUrl) {
       return NextResponse.json(
-        { error: "Name and description are required." },
+        { error: "Name, description, and valid download link are required." },
         { status: 400 }
       );
     }
 
     const product = products[index];
-    let exeFilename = product.exeFilename;
     let imageFilename = product.imageFilename;
-    let originalExeName = product.originalExeName;
-
-    if (exePreUploaded) {
-      const newExeFilename = String(formData.get("exeFilename") || "");
-      const newOriginal = String(formData.get("originalExeName") || "");
-      if (!newExeFilename || !newOriginal) {
-        return NextResponse.json(
-          { error: "EXE upload incomplete." },
-          { status: 400 }
-        );
-      }
-      const exists = await readUploadedFile(newExeFilename);
-      if (!exists) {
-        return NextResponse.json(
-          { error: "EXE not found. Upload ulit ang EXE." },
-          { status: 400 }
-        );
-      }
-      if (newExeFilename !== exeFilename) {
-        await deleteUploadedFile(exeFilename);
-      }
-      exeFilename = newExeFilename;
-      originalExeName = newOriginal;
-    } else if (exeFile && exeFile.size > 0) {
-      if (!exeFile.name.toLowerCase().endsWith(".exe")) {
-        return NextResponse.json(
-          { error: "EXE file must have .exe extension." },
-          { status: 400 }
-        );
-      }
-      if (exeFile.size > MAX_EXE) {
-        return NextResponse.json(
-          { error: "EXE file too large (max 100MB)." },
-          { status: 400 }
-        );
-      }
-      const exeExt = path.extname(exeFile.name) || ".exe";
-      const newExeFilename = `${id}${exeExt}`;
-      if (newExeFilename !== exeFilename) {
-        await deleteUploadedFile(exeFilename);
-      }
-      exeFilename = newExeFilename;
-      originalExeName = exeFile.name;
-      await saveUploadedFile(
-        exeFilename,
-        Buffer.from(await exeFile.arrayBuffer()),
-        "application/octet-stream"
-      );
-    }
 
     if (imageFile && imageFile.size > 0) {
       const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -141,9 +90,8 @@ export async function PATCH(
       name,
       description,
       features: parseFeatures(featuresRaw),
-      exeFilename,
+      downloadUrl,
       imageFilename,
-      originalExeName,
       updatedAt: new Date().toISOString(),
     };
 
@@ -177,8 +125,10 @@ export async function DELETE(
   const [removed] = products.splice(index, 1);
   await writeProducts(products);
 
-  await deleteUploadedFile(removed.exeFilename);
   await deleteUploadedFile(removed.imageFilename);
+  if (removed.exeFilename) {
+    await deleteUploadedFile(removed.exeFilename);
+  }
 
   return NextResponse.json({ success: true });
 }
