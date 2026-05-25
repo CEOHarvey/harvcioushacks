@@ -78,6 +78,7 @@ async function writeProductsBlob(products: Product[]): Promise<void> {
   await put(PRODUCTS_BLOB_KEY, JSON.stringify(products), {
     access: BLOB_ACCESS,
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/json",
   });
 }
@@ -109,6 +110,7 @@ export async function saveUploadedFile(
     await put(fileBlobKey(filename), data, {
       access: BLOB_ACCESS,
       addRandomSuffix: false,
+      allowOverwrite: true,
       contentType,
     });
     return;
