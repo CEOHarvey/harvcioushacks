@@ -121,3 +121,43 @@ export async function deleteUploadedFile(filename: string): Promise<void> {
     /* missing file */
   }
 }
+
+/** Full blob pathname (e.g. chunks/session/0) — not under files/ prefix. */
+export async function saveBlobPath(
+  pathname: string,
+  data: Buffer,
+  contentType: string
+): Promise<void> {
+  if (usesBlobStorage()) {
+    await put(pathname, data, {
+      access: "public",
+      addRandomSuffix: false,
+      contentType,
+    });
+    return;
+  }
+  const localPath = path.join(UPLOADS_DIR, pathname);
+  await fs.mkdir(path.dirname(localPath), { recursive: true });
+  await fs.writeFile(localPath, data);
+}
+
+export async function listBlobPaths(
+  prefix: string
+): Promise<{ pathname: string; url: string }[]> {
+  if (!usesBlobStorage()) return [];
+  const { blobs } = await list({ prefix, limit: 1000 });
+  return blobs.map((b) => ({ pathname: b.pathname, url: b.url }));
+}
+
+export async function deleteBlobPath(pathname: string): Promise<void> {
+  if (usesBlobStorage()) {
+    const url = await findBlobUrl(pathname);
+    if (url) await del(url);
+    return;
+  }
+  try {
+    await fs.unlink(path.join(UPLOADS_DIR, pathname));
+  } catch {
+    /* missing */
+  }
+}

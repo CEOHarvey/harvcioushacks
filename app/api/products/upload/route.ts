@@ -4,7 +4,7 @@ import path from "path";
 import { isAdminAuthenticated } from "@/lib/auth";
 import { imageExtFromType, parseFeatures } from "@/lib/product-form";
 import { readProducts, writeProducts } from "@/lib/products";
-import { saveUploadedFile, usesBlobStorage } from "@/lib/storage";
+import { readUploadedFile, saveUploadedFile, usesBlobStorage } from "@/lib/storage";
 import { Product } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -35,29 +35,66 @@ export async function POST(request: NextRequest) {
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
     const featuresRaw = String(formData.get("features") || "");
+    const exePreUploaded = formData.get("exePreUploaded") === "1";
+    const productId = String(formData.get("productId") || "") || uuidv4();
     const exeFile = formData.get("exe") as File | null;
     const imageFile = formData.get("image") as File | null;
 
-    if (!name || !description || !exeFile || !imageFile) {
+    if (!name || !description || !imageFile) {
       return NextResponse.json(
-        { error: "Name, description, EXE file, and image are required." },
+        { error: "Name, description, and image are required." },
         { status: 400 }
       );
     }
 
-    if (!exeFile.name.toLowerCase().endsWith(".exe")) {
-      return NextResponse.json(
-        { error: "EXE file must have .exe extension." },
-        { status: 400 }
-      );
-    }
+    let exeFilename: string;
+    let originalExeName: string;
 
-    if (exeFile.size > MAX_EXE) {
-      return NextResponse.json(
-        {
-          error: `EXE masyadong malaki (${(exeFile.size / 1024 / 1024).toFixed(1)}MB). Max 100MB.`,
-        },
-        { status: 400 }
+    if (exePreUploaded) {
+      exeFilename = String(formData.get("exeFilename") || "");
+      originalExeName = String(formData.get("originalExeName") || "");
+      if (!exeFilename || !originalExeName) {
+        return NextResponse.json(
+          { error: "EXE upload incomplete. Subukan ulit." },
+          { status: 400 }
+        );
+      }
+      const exists = await readUploadedFile(exeFilename);
+      if (!exists) {
+        return NextResponse.json(
+          { error: "EXE file not found on server. Upload ulit ang EXE." },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (!exeFile) {
+        return NextResponse.json(
+          { error: "EXE file is required." },
+          { status: 400 }
+        );
+      }
+      if (!exeFile.name.toLowerCase().endsWith(".exe")) {
+        return NextResponse.json(
+          { error: "EXE file must have .exe extension." },
+          { status: 400 }
+        );
+      }
+      if (exeFile.size > MAX_EXE) {
+        return NextResponse.json(
+          {
+            error: `EXE masyadong malaki (${(exeFile.size / 1024 / 1024).toFixed(1)}MB). Max 100MB.`,
+          },
+          { status: 400 }
+        );
+      }
+      const exeExt = path.extname(exeFile.name) || ".exe";
+      exeFilename = `${productId}${exeExt}`;
+      originalExeName = exeFile.name;
+      const exeBuffer = Buffer.from(await exeFile.arrayBuffer());
+      await saveUploadedFile(
+        exeFilename,
+        exeBuffer,
+        "application/octet-stream"
       );
     }
 
@@ -81,31 +118,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const id = uuidv4();
-    const exeExt = path.extname(exeFile.name) || ".exe";
     const imageExt = imageExtFromType(imageFile.type);
-    const exeFilename = `${id}${exeExt}`;
-    const imageFilename = `${id}${imageExt}`;
-
-    const exeBuffer = Buffer.from(await exeFile.arrayBuffer());
+    const imageFilename = `${productId}${imageExt}`;
     const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
-
-    await saveUploadedFile(
-      exeFilename,
-      exeBuffer,
-      "application/octet-stream"
-    );
     await saveUploadedFile(imageFilename, imageBuffer, imageFile.type);
 
     const now = new Date().toISOString();
     const product: Product = {
-      id,
+      id: productId,
       name,
       description,
       features: parseFeatures(featuresRaw),
       imageFilename,
       exeFilename,
-      originalExeName: exeFile.name,
+      originalExeName,
       createdAt: now,
       updatedAt: now,
     };
@@ -114,14 +140,10 @@ export async function POST(request: NextRequest) {
     products.push(product);
     await writeProducts(products);
 
-    return NextResponse.json({ success: true, id });
+    return NextResponse.json({ success: true, id: productId });
   } catch (err) {
     console.error("Upload error:", err);
     const msg = err instanceof Error ? err.message : "Upload failed.";
-    const hint =
-      process.env.VERCEL === "1"
-        ? " Sa Vercel, malalaki ang file — siguraduhing may Blob storage at i-redeploy ang site."
-        : "";
-    return NextResponse.json({ error: msg + hint }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

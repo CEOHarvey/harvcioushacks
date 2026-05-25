@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Product } from "@/lib/types";
-
-/** Vercel serverless request body limit (Hobby/Pro default). */
-const VERCEL_MAX_FILE_MB = 4.5;
+import {
+  needsChunkedExeUpload,
+  uploadExeInChunks,
+} from "@/lib/upload-exe-client";
 
 function apiFetch(url: string, options?: RequestInit) {
   return fetch(url, { ...options, credentials: "include" });
@@ -132,20 +133,51 @@ export function AdminPanel() {
         return;
       }
 
-      const maxBytes = VERCEL_MAX_FILE_MB * 1024 * 1024;
-      if (status.onVercel && exe && exe.size > maxBytes) {
-        setMessage(
-          `EXE masyadong malaki (${(exe.size / 1024 / 1024).toFixed(1)} MB). Sa Vercel max ~${VERCEL_MAX_FILE_MB} MB per upload. I-compress ang file o gamitin mas maliit na build.`
-        );
-        return;
+      const productId = editingId ?? crypto.randomUUID();
+      const existing = products.find((p) => p.id === productId);
+      let exeFilename = existing?.exeFilename ?? `${productId}.exe`;
+      let originalExeName = existing?.originalExeName ?? "";
+      let exeWasChunked = false;
+
+      if (exe) {
+        if (exe.size > 100 * 1024 * 1024) {
+          setMessage("EXE max 100MB.");
+          return;
+        }
+        const ext = exe.name.toLowerCase().endsWith(".exe") ? ".exe" : ".exe";
+        exeFilename = `${productId}${ext}`;
+        originalExeName = exe.name;
+
+        if (needsChunkedExeUpload(exe, status.onVercel)) {
+          await uploadExeInChunks(exe, exeFilename, (pct, label) =>
+            setMessage(`${label} (${pct}%)`)
+          );
+          exeWasChunked = true;
+        }
       }
 
       const formData = new FormData();
       formData.append("name", name);
       formData.append("description", description);
       formData.append("features", features);
-      if (exe) formData.append("exe", exe);
+      if (!isEditing) formData.append("productId", productId);
       if (image) formData.append("image", image);
+
+      if (exe && !exeWasChunked) {
+        formData.append("exe", exe);
+      }
+      if (exe && exeWasChunked) {
+        formData.append("exePreUploaded", "1");
+        formData.append("exeFilename", exeFilename);
+        formData.append("originalExeName", originalExeName);
+      }
+
+      if (!isEditing && !exe) {
+        setMessage("Kailangan ng EXE.");
+        return;
+      }
+
+      setMessage("Sine-save ang tool…");
 
       const url = isEditing
         ? `/api/products/${editingId}`

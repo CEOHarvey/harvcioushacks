@@ -5,6 +5,7 @@ import { imageExtFromType, parseFeatures } from "@/lib/product-form";
 import { readProducts, writeProducts } from "@/lib/products";
 import {
   deleteUploadedFile,
+  readUploadedFile,
   saveUploadedFile,
   usesBlobStorage,
 } from "@/lib/storage";
@@ -45,6 +46,7 @@ export async function PATCH(
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
     const featuresRaw = String(formData.get("features") || "");
+    const exePreUploaded = formData.get("exePreUploaded") === "1";
     const exeFile = formData.get("exe") as File | null;
     const imageFile = formData.get("image") as File | null;
 
@@ -60,7 +62,28 @@ export async function PATCH(
     let imageFilename = product.imageFilename;
     let originalExeName = product.originalExeName;
 
-    if (exeFile && exeFile.size > 0) {
+    if (exePreUploaded) {
+      const newExeFilename = String(formData.get("exeFilename") || "");
+      const newOriginal = String(formData.get("originalExeName") || "");
+      if (!newExeFilename || !newOriginal) {
+        return NextResponse.json(
+          { error: "EXE upload incomplete." },
+          { status: 400 }
+        );
+      }
+      const exists = await readUploadedFile(newExeFilename);
+      if (!exists) {
+        return NextResponse.json(
+          { error: "EXE not found. Upload ulit ang EXE." },
+          { status: 400 }
+        );
+      }
+      if (newExeFilename !== exeFilename) {
+        await deleteUploadedFile(exeFilename);
+      }
+      exeFilename = newExeFilename;
+      originalExeName = newOriginal;
+    } else if (exeFile && exeFile.size > 0) {
       if (!exeFile.name.toLowerCase().endsWith(".exe")) {
         return NextResponse.json(
           { error: "EXE file must have .exe extension." },
